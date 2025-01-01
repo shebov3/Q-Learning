@@ -5,9 +5,6 @@ import random
 import numpy as np
 from configurations import *
 from enum import Enum
-import collections
-
-experience_buffer = collections.deque(maxlen=10000)
 
 GRID_WIDTH = SCREEN_WIDTH/GRID_SIZE
 GRID_HEIGHT = SCREEN_HEIGHT/GRID_SIZE
@@ -135,11 +132,6 @@ class Agent(Snake):
         state.append(1 if food.position.y < self.position.y else 0)
         state.append(1 if food.position.y > self.position.y else 0)
 
-        state.append(1 if self.danger(self.position.x - 1, self.position.y-1) else 0)
-        state.append(1 if self.danger(self.position.x - 1, self.position.y+1) else 0)
-        state.append(1 if self.danger(self.position.x + 1, self.position.y-1) else 0)
-        state.append(1 if self.danger(self.position.x + 1, self.position.y+1) else 0)
-
         state.append(1 if self.danger(self.position.x - 1, self.position.y) else 0)
         state.append(1 if self.danger(self.position.x + 1, self.position.y) else 0)
         state.append(1 if self.danger(self.position.x, self.position.y - 1) else 0)
@@ -177,8 +169,13 @@ class Agent(Snake):
         if self.danger():
             return -10 
         if self.position == env.food.position:
-            return 10  
-        return (env.food.position - self.position).magnitude()*-0.005
+            return 10
+        
+        penalty = (env.food.position - self.position).magnitude()*-0.005
+        for i, body in enumerate(self.body[1:-1]):
+            penalty -= (body.position-self.position).dot(self.dir)*0.0001*(1/(i+1)) # penalize if the snake is moving at the same direction as the body
+        
+        return penalty
 
     def train(self, env):
         state = self.state_representation(env)
@@ -224,7 +221,7 @@ class Game:
         total_food_eaten = 0
         for episode in range(episodes):
             self.reset()
-            while not self.game_over and self.snake.steps < 300+(self.snake.length*5):
+            while not self.game_over and self.snake.steps < 500+(self.snake.length*5):
                 self.snake.train(self)
                 if self.snake.danger():
                     self.game_over = True
@@ -286,6 +283,6 @@ class Game:
 if __name__ == "__main__":
     game = Game()
     print("Starting training...")
-    game.train(episodes=2000)
+    game.train(episodes=500)
     print("Starting interactive gameplay...")
     game.play()
