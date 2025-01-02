@@ -1,13 +1,11 @@
 import pygame
+import pickle
 from pygame import Vector2
 from pygame.font import Font
 import random
 import numpy as np
 from configurations import *
-from enum import Enum
 
-GRID_WIDTH = SCREEN_WIDTH/GRID_SIZE
-GRID_HEIGHT = SCREEN_HEIGHT/GRID_SIZE
 
 class ACTIONS:
     LEFT = Vector2(-1, 0)
@@ -16,7 +14,7 @@ class ACTIONS:
     DOWN = Vector2(0, 1)
 
 class Object:
-    def __init__(self, position=Vector2(0, 0), color=DEFAULT_COLOR, size=Vector2(GRID_SIZE, GRID_SIZE)):
+    def __init__(self, position=Vector2(0, 0), color=DEFAULT_COLOR, size=Vector2(GRID_SIZE-1, GRID_SIZE-1)):
         self._position = position * GRID_SIZE
         self.color = color
         self.size = size
@@ -46,11 +44,13 @@ class Snake(Object):
         super().__init__(Vector2(GRID_WIDTH-10, GRID_HEIGHT//2))
         self.speed = speed
         self.score = 0
+        self.color = (random.randint(0,255),random.randint(0,255),random.randint(0,255))
         self.total_steps = 0
         self.steps = 0
         self.food_eaten = 0
         self.length = length
-        self.body = [Object(Vector2(GRID_WIDTH-10, (GRID_HEIGHT//2)+i+1), SNAKE_COLOR) for i in range(length)]
+        rand = random.randint(1,GRID_WIDTH-1)
+        self.body = [Object(Vector2(GRID_WIDTH-rand, (GRID_HEIGHT//2)+i+1), self.color) for i in range(length)]
         self.dir = Vector2(0, 1)
 
     def danger(self, x=None, y=None):
@@ -77,7 +77,7 @@ class Snake(Object):
 
     def move(self):
         self.position = (self.position + self.dir)
-        self.body.append(Object(self.position, SNAKE_COLOR))
+        self.body.append(Object(self.position, self.color))
         if len(self.body) > self.length:
             self.body.pop(0)
         self.steps += 1
@@ -112,11 +112,33 @@ class Agent(Snake):
     q_table = {}
     epsilon = 1.0
     alpha = 0.01
-    gamma = 0.99
+    gamma = 0.95
+    min_epsilon = 0.001
     actions = [ACTIONS.LEFT, ACTIONS.RIGHT, ACTIONS.UP, ACTIONS.DOWN]  
 
     def __init__(self, speed=60, length=3):
         super().__init__(speed, length)
+
+    @staticmethod
+    def save(filename="src/Agents/agent_data.pkl"):
+        agent_data = {
+            "q_table": Agent.q_table,
+            "epsilon": Agent.epsilon,
+        }
+        with open(filename, "wb") as file:
+            pickle.dump(agent_data, file)
+        print(f"Agent data saved to {filename}.")
+    
+    @staticmethod
+    def load(filename="src/Agents/agent_data.pkl"):
+        try:
+            with open(filename, "rb") as file:
+                agent_data = pickle.load(file)
+                Agent.q_table = agent_data["q_table"]
+                Agent.epsilon = agent_data["epsilon"]
+            print(f"Agent data loaded from {filename}.")
+        except FileNotFoundError:
+            print(f"No saved agent data found at {filename}. Starting fresh.")
 
     def decide(self, env):
         state = self.state_representation(env)
@@ -127,6 +149,7 @@ class Agent(Snake):
         food = env.food
         state = []
 
+        food = min([food for food in env.food], key=lambda x: (x.position - self.position).magnitude())
         state.append(1 if food.position.x < self.position.x else 0)
         state.append(1 if food.position.x > self.position.x else 0)
         state.append(1 if food.position.y < self.position.y else 0)
@@ -172,9 +195,6 @@ class Agent(Snake):
             return 10
         
         penalty = (env.food.position - self.position).magnitude()*-0.005
-        for i, body in enumerate(self.body[1:-1]):
-            penalty -= (body.position-self.position).dot(self.dir)*0.0001*(1/(i+1)) # penalize if the snake is moving at the same direction as the body
-        
         return penalty
 
     def train(self, env):
@@ -185,13 +205,12 @@ class Agent(Snake):
         reward = self.get_reward(env)
         next_state = self.state_representation(env)
         self.update_q_table(state, action, reward, next_state)
-        Agent.epsilon = max(0.001, Agent.epsilon * 0.9999)
+        Agent.epsilon = max(Agent.min_epsilon, Agent.epsilon * 0.9999)
 
 class Game:
     def __init__(self):
-
-        self.snake = Agent()
-        self.food = Food()
+        self.snakes = [Agent(), Agent()]
+        self.food = [Food(), Food(), Food()]
         self.game_over = False
         self.game_close = False
 
@@ -203,8 +222,9 @@ class Game:
         self.font_style = Font("src/Fonts/Pixelify_Sans/static/PixelifySans-Regular.ttf", 25)
 
     def UI(self):
-        self.screen.blit(self.font_style.render("Your Score: " + str(self.snake.score), True, (255, 255, 255)), [0, 0])
-        self.screen.blit(self.font_style.render("Steps: " + str(self.snake.steps), True, (255, 255, 255)), [0, 25])
+        for i, snake in enumerate(self.snakes):
+            self.screen.blit(self.font_style.render("Your Score: " + str(snake.score), True, (255, 255, 255)), [i*250, 0])
+            self.screen.blit(self.font_style.render("Steps: " + str(snake.steps), True, (255, 255, 255)), [i*250, 25])
         
     def message(self, msg, color):
         mesg = self.font_style.render(msg, True, color)
@@ -215,7 +235,8 @@ class Game:
         self.food.spawn()
         self.game_over = False
 
-    def train(self, episodes=700):
+    def train(self, episodes=350):
+        Agent.load()
         total_score = 0
         total_steps = 0
         total_food_eaten = 0
@@ -237,16 +258,20 @@ class Game:
                 total_score = 0
                 total_steps = 0
                 total_food_eaten = 0
+        Agent.save()
         print("Training complete!")
     
+    def multiplayer():
+        pass
+
     def play(self):
         self.window()
         while not self.game_close:
+            self.screen.fill(BACKGROUND_COLOR)
             while self.game_over:
                 if self.snake.__class__.__name__ == "Agent":
                     self.reset()
                 else:
-                    self.screen.fill((0, 0, 0))
                     self.message("You Lost! Press R-Replay or ESC-Quit", (255, 0, 0))
                     self.UI()
                     pygame.display.update()
@@ -259,23 +284,23 @@ class Game:
                                 self.game_close = True
                             if event.key == pygame.K_r:
                                 self.reset()
+            for snake in self.snakes:
+                snake.decide(self)
+                snake.move()
+                
+                if snake.danger():
+                    game_over = True
 
-            self.snake.decide(self)
-            self.snake.move()
-            
-            if self.snake.danger():
-                self.game_over = True
+                for food in self.food:
+                    if snake.position == food.position:
+                        snake.eat(food)
+                    food.render(self.screen)
+                snake.render(self.screen)
 
-            if self.snake.position == self.food.position:
-                self.snake.eat(self.food)
-
-            self.screen.fill(BACKGROUND_COLOR)
-            self.food.render(self.screen)
-            self.snake.render(self.screen)
             self.UI()
 
             pygame.display.update()
-            self.clock.tick(self.snake.speed)
+            self.clock.tick(60)
 
         pygame.quit()
         quit()
@@ -283,6 +308,7 @@ class Game:
 if __name__ == "__main__":
     game = Game()
     print("Starting training...")
-    game.train(episodes=500)
+    # game.train(episodes=350)
+    Agent.load()
     print("Starting interactive gameplay...")
     game.play()
