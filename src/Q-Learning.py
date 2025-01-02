@@ -5,7 +5,7 @@ from pygame.font import Font
 import random
 import numpy as np
 from configurations import *
-
+import math
 class ACTIONS:
     LEFT = Vector2(-1, 0)
     RIGHT = Vector2(1, 0)
@@ -13,14 +13,15 @@ class ACTIONS:
     DOWN = Vector2(0, 1)
 
 class Object:
-    def __init__(self, position=Vector2(0, 0), color=DEFAULT_COLOR, size=Vector2(GRID_SIZE-1, GRID_SIZE-1)):
+    def __init__(self, position=Vector2(0, 0), color=DEFAULT_COLOR, size=Vector2(GRID_SIZE-1, GRID_SIZE-1), snake=None):
         self._position = position * GRID_SIZE
         self.color = color
         self.size = size
+        self.snake = snake
 
     @property
     def position(self):
-        return self._position / GRID_SIZE
+        return self._position // GRID_SIZE
 
     @position.setter
     def position(self, new_position):
@@ -36,12 +37,12 @@ class Food(Object):
         self.spawn()
 
     def spawn(self):
-        self.position = Vector2(random.randrange(0, GRID_WIDTH), random.randrange(0, GRID_HEIGHT))
+        self.position = Vector2(random.randint(1, GRID_WIDTH-1), random.randint(1, GRID_HEIGHT-1))
 
 class Snake(Object):
     colors = []
     taken = []
-    def __init__(self, speed=10, length=3):
+    def __init__(self, speed=10, length=10):
         self.speed = speed
         self.score = 0
         self.color = (random.randint(0,255),random.randint(0,255),random.randint(0,255))
@@ -51,24 +52,22 @@ class Snake(Object):
         self.length = length
         self.dead = False
         rand = random.randint(1,GRID_WIDTH-1)
-        self.body = [Object(Vector2(GRID_WIDTH-rand, (GRID_HEIGHT//2)+i+1), self.color) for i in range(length)]
-        self.dir = Vector2(0, 1)
-        super().__init__(Vector2(rand, GRID_HEIGHT//2), self.color)
+        init = GRID_WIDTH-rand
+        self.body = [Object(Vector2(init, 25), self.color)]
+        self.dir = Vector2(0, -1)
+
+    @property
+    def position(self):
+        return self.body[-1].position
+    
+    @position.setter
+    def position(self, new_position):
+        self.body[-1].position = new_position
 
     def kill(self):
         self.dead = True
-        self.body = []
-
-    def danger(self, x=None, y=None):
-        x = x if x is not None else self.position.x
-        y = y if y is not None else self.position.y
-
-        if x < 0 or x >= GRID_WIDTH or y < 0 or y >= GRID_HEIGHT:
-            return True
-        for block in self.body[:-1]:  
-            if block.position.x == x and block.position.y == y:
-                return True
-        return False
+        for block in self.body:
+            del block
 
     def eat(self, food):
         self.length += 1
@@ -82,15 +81,16 @@ class Snake(Object):
             block.render(screen)
 
     def move(self):
+        if self.dead: return
         self.position = (self.position + self.dir)
         self.body.append(Object(self.position, self.color))
-        if len(self.body) > self.length:
+        if len(self.body) > self.length+1:
             self.body.pop(0)
         self.steps += 1
         self.total_steps += 1
 
 class Player(Snake):
-    def __init__(self, speed=10, length=3):
+    def __init__(self, speed=15, length=10):
         super().__init__(speed, length)
 
     def decide(self, env):
@@ -118,18 +118,17 @@ class Agent(Snake):
     q_table = {}
     epsilon = 1.0
     alpha = 0.01
-    gamma = 0.99
+    gamma = 0.9
     min_epsilon = 0.001
     actions = [ACTIONS.LEFT, ACTIONS.RIGHT, ACTIONS.UP, ACTIONS.DOWN]  
 
-    def __init__(self, speed=60, length=3):
+    def __init__(self, speed=60, length=10):
         super().__init__(speed, length)
 
     @staticmethod
     def save(filename="src/Agents/agent_data.pkl"):
         agent_data = {
             "q_table": Agent.q_table,
-            # "epsilon": Agent.epsilon,
         }
         with open(filename, "wb") as file:
             pickle.dump(agent_data, file)
@@ -141,7 +140,7 @@ class Agent(Snake):
             with open(filename, "rb") as file:
                 agent_data = pickle.load(file)
                 Agent.q_table = agent_data["q_table"]
-                # Agent.epsilon = agent_data["epsilon"]
+            Agent.epsilon = Agent.min_epsilon
             print(f"Agent data loaded from {filename}.")
         except FileNotFoundError:
             print(f"No saved agent data found at {filename}. Starting fresh.")
@@ -166,10 +165,10 @@ class Agent(Snake):
         state.append(1 if food.position.y < self.position.y else 0)
         state.append(1 if food.position.y > self.position.y else 0)
 
-        state.append(1 if self.danger(self.position.x - 1, self.position.y) else 0)
-        state.append(1 if self.danger(self.position.x + 1, self.position.y) else 0)
-        state.append(1 if self.danger(self.position.x, self.position.y - 1) else 0)
-        state.append(1 if self.danger(self.position.x, self.position.y + 1) else 0)
+        state.append(1 if env.danger(self.position.x - 1, self.position.y, self) else 0)
+        state.append(1 if env.danger(self.position.x + 1, self.position.y, self) else 0)
+        state.append(1 if env.danger(self.position.x, self.position.y - 1, self) else 0)
+        state.append(1 if env.danger(self.position.x, self.position.y + 1, self) else 0)
 
         return tuple(state)
 
@@ -200,13 +199,13 @@ class Agent(Snake):
         Agent.q_table[state][action_index] += Agent.alpha * td_delta
 
     def get_reward(self, env):
-        if self.danger():
+        if env.danger(self.position.x, self.position.y):
             return -100
         food = self.closest_food(env)
         if self.position == food.position:
             return 20
         
-        reward = -((food.position - self.position).magnitude())*0.0001
+        reward = -((food.position - self.position).magnitude())*0.001
         return reward
 
     def train(self, env):
@@ -221,10 +220,25 @@ class Agent(Snake):
 
 class Game:
     def __init__(self):
-        self.snakes = [Agent() for i in range(1)]
-        self.food = [Food() for i in range(1)]
+        self.snakes = [Agent() for i in range(3)]
+        self.snakes.append(Player())
+        self.food = [Food() for i in range(3)]
         self.game_over = False
         self.game_close = False
+
+    def danger(self, x, y, snake):
+        if x < 0 or x >= GRID_WIDTH or y < 0 or y >= GRID_HEIGHT:
+            return True
+        for other_snake in self.snakes:
+            if other_snake == snake:
+                for block in other_snake.body[:-3]:
+                    if block.position.x == x and block.position.y == y:
+                        return True
+            else:
+                for block in other_snake.body:
+                    if block.position.x == x and block.position.y == y:
+                        return True
+        return False
 
     def window(self):
         pygame.init()
@@ -250,41 +264,52 @@ class Game:
         self.game_over = False
 
     def train(self, episodes=350):
-        total_score = 0
+        total_score = 0.0
         total_steps = 0
         total_food_eaten = 0
-        for episode in range(episodes//len(self.snakes)):
+        print_every = 10
+
+        for episode in range(episodes // len(self.snakes)):
             self.reset()
             while not self.game_over:
                 for snake in self.snakes:
+                    if snake.dead:
+                        continue
+                    
                     snake.train(self)
+
                     for food in self.food:
                         if snake.position == food.position:
                             total_steps += snake.steps
                             snake.eat(food)
-                    
-                    if snake.danger() or snake.steps > 500+(snake.length*5):
+
+                    if self.danger(snake.position.x, snake.position.y, snake) or snake.steps > 500 + (snake.length * 2):
                         total_steps += snake.steps
                         snake.kill()
 
-                if all([snake.dead for snake in self.snakes]):
+                if all(snake.dead for snake in self.snakes):
                     self.game_over = True
-            total_steps /= len(self.snakes)
-            total_score += sum([snake.score for snake in self.snakes])/len(self.snakes)
-            total_food_eaten += sum([snake.food_eaten for snake in self.snakes])/len(self.snakes)
 
-            average_steps = total_steps / (total_food_eaten) if total_food_eaten > 0 else 1000
-            average_score = total_score / (50*len(self.snakes))
-            if (episode*len(self.snakes)) % (50*len(self.snakes)) == 0:
-                print(f"Episode {(episode*len(self.snakes))}/{episodes} completed. Average Steps: {average_steps}, Average Score: {average_score}")
-                total_score = 0
+            total_score += sum(snake.score for snake in self.snakes) / len(self.snakes)
+            total_food_eaten += sum(snake.food_eaten for snake in self.snakes) / len(self.snakes)
+
+            if (episode + 1) % print_every == 0:
+                average_steps = (total_steps / total_food_eaten) if total_food_eaten > 0 else float('inf')
+                average_score = total_score / print_every
+                print(f"Episode {(episode + 1) * len(self.snakes)}/{episodes} completed.")
+                print(f"Average Steps per Food: {average_steps:.2f}, Average Score: {average_score:.2f}")
+
+                total_score = 0.0
                 total_steps = 0
                 total_food_eaten = 0
+
         # Agent.save()
         print("Training complete!")
 
+
     def play(self):
         self.window()
+        tick = min(snake.speed for snake in self.snakes)
         while not self.game_close:
             self.screen.fill(BACKGROUND_COLOR)
             while self.game_over:
@@ -304,12 +329,16 @@ class Game:
                             if event.key == pygame.K_r:
                                 self.reset()
             for snake in self.snakes:
+                if snake.dead:
+                    continue
+                
                 snake.decide(self)
                 snake.move()
                 
-                if snake.danger():
+                if self.danger(snake.position.x, snake.position.y, snake):
                     snake.kill()
-
+                    tick = min([snake.speed for snake in self.snakes if not snake.dead], default=60)
+                    
                 for food in self.food:
                     if snake.position == food.position:
                         snake.eat(food)
@@ -320,7 +349,7 @@ class Game:
             self.UI()
 
             pygame.display.update()
-            self.clock.tick(60)
+            self.clock.tick(tick)
 
         pygame.quit()
         quit()
@@ -328,7 +357,7 @@ class Game:
 if __name__ == "__main__":
     game = Game()
     print("Starting training...")
-    game.train(episodes=350)
-    # Agent.load()
+    # game.train(episodes=300)
+    Agent.load()
     print("Starting interactive gameplay...")
     game.play()
