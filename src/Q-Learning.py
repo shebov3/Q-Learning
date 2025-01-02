@@ -199,13 +199,13 @@ class Agent(Snake):
         Agent.q_table[state][action_index] += Agent.alpha * td_delta
 
     def get_reward(self, env):
-        if env.danger(self.position.x, self.position.y):
-            return -100
+        if env.danger(self.position.x, self.position.y, self):
+            return -10
         food = self.closest_food(env)
         if self.position == food.position:
-            return 20
+            return 10
         
-        reward = -((food.position - self.position).magnitude())*0.001
+        reward = -((food.position - self.position).magnitude())*0.0001
         return reward
 
     def train(self, env):
@@ -220,9 +220,8 @@ class Agent(Snake):
 
 class Game:
     def __init__(self):
-        self.snakes = [Agent() for i in range(3)]
-        self.snakes.append(Player())
-        self.food = [Food() for i in range(3)]
+        self.snakes = [Agent() for i in range(8)]
+        self.food = [Food() for i in range(10)]
         self.game_over = False
         self.game_close = False
 
@@ -231,7 +230,7 @@ class Game:
             return True
         for other_snake in self.snakes:
             if other_snake == snake:
-                for block in other_snake.body[:-3]:
+                for block in other_snake.body[:-2]:
                     if block.position.x == x and block.position.y == y:
                         return True
             else:
@@ -303,7 +302,7 @@ class Game:
                 total_steps = 0
                 total_food_eaten = 0
 
-        # Agent.save()
+        Agent.save()
         print("Training complete!")
 
 
@@ -357,7 +356,7 @@ class Game:
 if __name__ == "__main__":
     game = Game()
     print("Starting training...")
-    # game.train(episodes=300)
+    # game.train(episodes=1500)
     Agent.load()
     print("Starting interactive gameplay...")
     game.play()
