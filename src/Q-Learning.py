@@ -5,7 +5,6 @@ from pygame.font import Font
 import random
 import numpy as np
 from configurations import *
-import math
 class ACTIONS:
     LEFT = Vector2(-1, 0)
     RIGHT = Vector2(1, 0)
@@ -42,7 +41,7 @@ class Food(Object):
 class Snake(Object):
     colors = []
     taken = []
-    def __init__(self, speed=10, length=10):
+    def __init__(self, speed=10, length=3):
         self.speed = speed
         self.score = 0
         self.color = (random.randint(0,255),random.randint(0,255),random.randint(0,255))
@@ -90,29 +89,36 @@ class Snake(Object):
         self.total_steps += 1
 
 class Player(Snake):
-    def __init__(self, speed=15, length=10):
+    i = 1
+    def __init__(self, speed=15, length=3):
         super().__init__(speed, length)
+        self.player = Player.i
+        Player.i += 1
 
-    def decide(self, env):
+    def decide(self, key):
         prev_dir = self.dir
-        for event in pygame.event.get():
-            type = event.type
-            if type == pygame.QUIT:
-                env.game_close = True
-            if type == pygame.KEYDOWN:
-                key = event.key
-                if event.key == pygame.K_ESCAPE:
-                    env.game_over = True
-                elif prev_dir.x == 0:
-                    if key == pygame.K_LEFT or key == pygame.K_a:
-                        self.dir = ACTIONS.LEFT
-                    elif key == pygame.K_RIGHT or key == pygame.K_d:
-                        self.dir = ACTIONS.RIGHT
-                elif prev_dir.y == 0:
-                    if key == pygame.K_UP or key == pygame.K_w:
-                        self.dir = ACTIONS.UP
-                    elif key == pygame.K_DOWN or key == pygame.K_s:
-                        self.dir = ACTIONS.DOWN
+        if prev_dir.x == 0:
+            if self.player == 1:
+                if key == pygame.K_a:
+                    self.dir = ACTIONS.LEFT
+                if key == pygame.K_d:
+                    self.dir = ACTIONS.RIGHT
+            else:
+                if key == pygame.K_LEFT:
+                    self.dir = ACTIONS.LEFT
+                if key == pygame.K_RIGHT:
+                    self.dir = ACTIONS.RIGHT
+        elif prev_dir.y == 0:
+            if self.player == 1:
+                if key == pygame.K_w:
+                    self.dir = ACTIONS.UP
+                if key == pygame.K_s:
+                    self.dir = ACTIONS.DOWN
+            else:
+                if key == pygame.K_UP:
+                    self.dir = ACTIONS.UP
+                if key == pygame.K_DOWN:
+                    self.dir = ACTIONS.DOWN
 
 class Agent(Snake):
     q_table = {}
@@ -122,7 +128,7 @@ class Agent(Snake):
     min_epsilon = 0.001
     actions = [ACTIONS.LEFT, ACTIONS.RIGHT, ACTIONS.UP, ACTIONS.DOWN]  
 
-    def __init__(self, speed=60, length=10):
+    def __init__(self, speed=60, length=3):
         super().__init__(speed, length)
 
     @staticmethod
@@ -218,12 +224,32 @@ class Agent(Snake):
         self.update_q_table(state, action, reward, next_state)
         Agent.epsilon = max(Agent.min_epsilon, Agent.epsilon * 0.9999)
 
+players = 0
+bots = 2
+
 class Game:
+    speed_up = 1.0
     def __init__(self):
-        self.snakes = [Agent() for i in range(8)]
-        self.food = [Food() for i in range(10)]
+        self.snakes = [Agent() for i in range(bots)]+[Player() for i in range(players)]
+        self.food = [Food() for i in range(2)]
+        print(self.food)
         self.game_over = False
         self.game_close = False
+
+    def getKey(self):
+        for event in pygame.event.get():
+            type = event.type
+            if type == pygame.QUIT:
+                self.game_close = True
+            if type == pygame.KEYDOWN:
+                key = event.key
+                if event.key == pygame.K_ESCAPE:
+                    self.game_over = True
+                if event.key == pygame.K_e:
+                    Game.speed_up *= 1.1
+                if event.key == pygame.K_q:
+                    Game.speed_up /= 1.1
+                return key
 
     def danger(self, x, y, snake):
         if x < 0 or x >= GRID_WIDTH or y < 0 or y >= GRID_HEIGHT:
@@ -250,12 +276,14 @@ class Game:
         for i, snake in enumerate(self.snakes):
             self.screen.blit(self.font_style.render("Your Score: " + str(snake.score), True, snake.color), [i*250, 0])
             self.screen.blit(self.font_style.render("Steps: " + str(snake.steps), True, snake.color), [i*250, 25])
-        
+        self.screen.blit(self.font_style.render(f"Speed: x{Game.speed_up}", True, (255,255,255)), [0, SCREEN_HEIGHT-25])
+    
     def message(self, msg, color):
         mesg = self.font_style.render(msg, True, color)
         self.screen.blit(mesg, [SCREEN_WIDTH / 6, SCREEN_HEIGHT / 3])
 
     def reset(self):
+        Player.i = 0
         for snake in self.snakes:
             snake.__init__()
         for food in self.food:
@@ -308,7 +336,6 @@ class Game:
 
     def play(self):
         self.window()
-        tick = min(snake.speed for snake in self.snakes)
         while not self.game_close:
             self.screen.fill(BACKGROUND_COLOR)
             while self.game_over:
@@ -327,16 +354,18 @@ class Game:
                                 self.game_close = True
                             if event.key == pygame.K_r:
                                 self.reset()
+            tick = min(snake.speed for snake in self.snakes if not snake.dead)
+            key = self.getKey()
             for snake in self.snakes:
                 if snake.dead:
                     continue
                 
-                snake.decide(self)
+
+                snake.decide(key if snake.__class__.__name__ == "Player" else self)
                 snake.move()
                 
                 if self.danger(snake.position.x, snake.position.y, snake):
                     snake.kill()
-                    tick = min([snake.speed for snake in self.snakes if not snake.dead], default=60)
                     
                 for food in self.food:
                     if snake.position == food.position:
@@ -348,7 +377,7 @@ class Game:
             self.UI()
 
             pygame.display.update()
-            self.clock.tick(tick)
+            self.clock.tick(tick*Game.speed_up)
 
         pygame.quit()
         quit()
@@ -356,7 +385,7 @@ class Game:
 if __name__ == "__main__":
     game = Game()
     print("Starting training...")
-    # game.train(episodes=1500)
+    # game.train(episodes=500)
     Agent.load()
     print("Starting interactive gameplay...")
     game.play()
